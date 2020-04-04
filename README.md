@@ -16,7 +16,7 @@ vtoydump [ -lL ] [ -v ]
   
 For Windows:  
 ```
-vtoydump [ -m ] [ -i filepath ] [ -v ]  
+vtoydump.exe [ -m ] [ -i filepath ] [ -v ]  
     none  Only print ventoy runtime data  
     -m    Mount the iso file (Not supported before Windows 8 and Windows Server 2012)  
     -i    Load .sys driver  
