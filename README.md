@@ -1,7 +1,7 @@
 # vtoydump
 
 #### Introduction
-This is a tool used with "Ventoy Compatible". See http://www.ventoy.net/compatible.html for detail.
+This is a tool used with "Ventoy Compatible". See [https://www.ventoy.net/en/compatible.html](https://www.ventoy.net/en/compatible.html) for detail.
 
 #### Usage
 For Linux:  
