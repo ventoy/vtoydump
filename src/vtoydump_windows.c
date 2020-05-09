@@ -336,6 +336,7 @@ int vtoy_find_disk(ventoy_os_param *param, char *diskname, int buflen)
     CHAR *Pos = NULL; 
     CHAR *StringBuf = NULL;    
     UINT8 UUID[16];
+    CHAR FilePath[512];
 
     vtoy_dump_uuid("Find disk for UUID: ", param->vtoy_disk_guid);
     debug("\n");
@@ -367,6 +368,18 @@ int vtoy_find_disk(ventoy_os_param *param, char *diskname, int buflen)
         debug("OK\n");
 
         sprintf_s(diskname, buflen, "%s", Pos);
+        
+        sprintf_s(FilePath, sizeof(FilePath), "%s%s", diskname, param->vtoy_img_path + 1);
+        if (!vtoy_is_file_exist(FilePath))
+        {
+            debug("File %s not exist ...\n", FilePath);
+            continue;
+        }
+        else
+        {
+            debug("File %s exist ...\n", FilePath);
+        }
+
         rc = 0;
         break;
     }

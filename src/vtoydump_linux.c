@@ -265,6 +265,11 @@ static int vtoy_find_disk_by_size(unsigned long long size, char *diskname, int b
     int rc = 0;
 
     dir = opendir("/sys/block");
+    if (!dir)
+    {
+        return 0;
+    }
+    
     while ((p = readdir(dir)) != NULL)
     {
         if (!vtoy_is_possible_blkdev(p->d_name))
@@ -294,6 +299,11 @@ static int vtoy_find_disk_by_guid(uint8_t *guid, char *diskname, int buflen)
     uint8_t vtguid[16];
 
     dir = opendir("/sys/block");
+    if (!dir)
+    {
+        return 0;
+    }
+    
     while ((p = readdir(dir)) != NULL)
     {
         if (!vtoy_is_possible_blkdev(p->d_name))
@@ -323,6 +333,11 @@ int vtoy_find_disk(ventoy_os_param *param, char *diskname, int buflen)
     if (cnt > 1)
     {
         cnt = vtoy_find_disk_by_guid(param->vtoy_disk_guid, diskname, buflen);
+    }
+    else if (cnt == 0)
+    {
+        cnt = vtoy_find_disk_by_guid(param->vtoy_disk_guid, diskname, buflen);
+        debug("find 0 disk by size, try with guid cnt=%d...\n", cnt);
     }
 
     if (cnt > 1)
