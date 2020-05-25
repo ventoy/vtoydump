@@ -394,6 +394,14 @@ int vtoy_print_os_param(ventoy_os_param *param, char *diskname)
     return 0;
 }
 
+#ifdef VTOY_NT5
+int vtoy_mount_iso(ventoy_os_param *param, const char *diskname)
+{
+    (void)param;
+    (void)diskname;
+    return 1;
+}
+#else
 int vtoy_mount_iso(ventoy_os_param *param, const char *diskname)
 {
     CHAR Drive = 'A';
@@ -463,6 +471,7 @@ int vtoy_mount_iso(ventoy_os_param *param, const char *diskname)
     CloseHandle(Handle);
     return 0;
 }
+#endif
 
 int vtoy_load_nt_driver(const char *DrvBinPath)
 {
