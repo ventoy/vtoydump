@@ -146,6 +146,55 @@ int vtoy_os_param_from_efivar(ventoy_os_param *param)
     return 0;
 }
 
+int vtoy_os_param_from_file(ventoy_os_param *param, const char *file)
+{
+    int j;
+    int rc = 1;
+    int size = 0;
+    FILE *fp = NULL;
+    UINT8 *Buffer = NULL;
+    
+    fopen_s(&fp, file, "rb");
+    if (fp == NULL)
+    {
+        debug("Failed to open file %s\n", file);
+        return 1;
+    }
+    
+    fseek(fp, 0, SEEK_END);
+    size = (int)ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    
+    debug("File size:%d\n", size);
+
+    Buffer = (UINT8 *)malloc(size);
+    if (Buffer == NULL)
+    {
+        debug("Failed to alloc memory %d\n", size);
+        goto end;
+    }
+
+    fread(Buffer, 1, size, fp);
+
+    for (j = 0; j < size; j++)
+    {
+        if (0 == vtoy_check_os_param((ventoy_os_param *)(Buffer + j)))
+        {
+            debug("find ventoy os pararm at file offset %d\n", j);
+            memcpy(param, Buffer + j, sizeof(ventoy_os_param));
+            rc = 0;
+        }
+    }
+
+    free(Buffer);
+    
+end:
+    
+    fclose(fp);
+    
+    return rc;
+}
+
 int vtoy_os_param_from_ibft(ventoy_os_param *param)
 {   
     UINT i = 0;
@@ -576,6 +625,7 @@ int main(int argc, char **argv)
 {
     int rc;
     int ch;
+    int fromfile = 0;
     char *pos;
     int mountiso = 0;
     char diskname[128] = { 0 };
@@ -602,6 +652,20 @@ int main(int argc, char **argv)
                 return 1;
             }
         }
+        else if (check_opt('f'))
+        {
+            ch++;
+            if (ch < argc && vtoy_is_file_exist(argv[ch]))
+            {
+                fromfile = 1;
+                sprintf_s(filepath, sizeof(filepath), "%s", argv[ch]);
+            }
+            else
+            {
+                printf("Must input data file full path\n");
+                return 1;
+            }
+        }
         else if (check_opt('v'))
         {
             verbose = 1;
@@ -619,7 +683,12 @@ int main(int argc, char **argv)
 
     memset(&param, 0, sizeof(ventoy_os_param));
 
-    if (vtoy_is_efi_system())
+    if (fromfile)
+    {
+        debug("Data file specified, get os pararm from it\n");
+        rc = vtoy_os_param_from_file(&param, filepath);
+    }
+    else if (vtoy_is_efi_system())
     {
         debug("current is efi system, get os pararm from efivar\n");
         rc = vtoy_os_param_from_efivar(&param);
