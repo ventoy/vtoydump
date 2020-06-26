@@ -31,24 +31,6 @@
 static int verbose = 0;
 static ventoy_guid vtoy_guid = VENTOY_GUID;
 
-int vtoy_is_efi_system(void)
-{
-    UINT32 Data;
-    DWORD Status;
-
-    GetFirmwareEnvironmentVariableA("", "{00000000-0000-0000-0000-000000000000}", &Data, sizeof(Data));
-    Status = GetLastError();
-
-    debug("Get Dummy Firmware Environment Variable Status:%u\n", Status);
-
-    if (ERROR_INVALID_FUNCTION == GetLastError())
-    {
-        return 0;
-    }
-
-    return 1;
-}
-
 //Grant Privilege
 static int vtoy_grant_privilege(void)
 {
@@ -128,6 +110,37 @@ static int vtoy_grant_privilege(void)
     free(Privileges);
     return 0;
 }
+
+
+int vtoy_is_efi_system(void)
+{
+    UINT32 Data;
+    DWORD Status;
+
+    GetFirmwareEnvironmentVariableA("", "{00000000-0000-0000-0000-000000000000}", &Data, sizeof(Data));
+    Status = GetLastError();
+
+    debug("Get Dummy Firmware Environment Variable Status:%u\n", Status);
+
+    if (ERROR_PRIVILEGE_NOT_HELD == Status)
+    {
+        debug("need to grant privilege %u\n", Status);
+        vtoy_grant_privilege();
+        
+        GetFirmwareEnvironmentVariableA("", "{00000000-0000-0000-0000-000000000000}", &Data, sizeof(Data));
+        Status = GetLastError();
+        
+        debug("Get Dummy Firmware Environment Variable again Status:%u\n", Status);
+    }
+
+    if (ERROR_INVALID_FUNCTION == Status)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+
 
 int vtoy_os_param_from_efivar(ventoy_os_param *param)
 {
