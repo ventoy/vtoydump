@@ -93,8 +93,22 @@ typedef struct ventoy_os_param
 
     uint64_t  vtoy_reserved[4];     // Internal use by ventoy
 
-    uint8_t   reserved[31];
+    uint8_t   vtoy_disk_signature[4];
+    uint8_t   reserved[27];
 }ventoy_os_param;
+
+typedef struct acpi_table_header
+{
+  uint8_t signature[4];
+  uint32_t length;
+  uint8_t revision;
+  uint8_t checksum;
+  uint8_t oemid[6];
+  uint8_t oemtable[8];
+  uint32_t oemrev;
+  uint8_t creator_id[4];
+  uint32_t creator_rev;
+} acpi_table_header;
 
 #pragma pack()
 

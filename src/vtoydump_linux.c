@@ -46,13 +46,53 @@
 
 #define SYS_EFI  "/sys/firmware/efi"
 #define VENTOY_OS_EFIVAR   VENTOY_VAR_NAME"-77772020-2e77-6576-6e74-6f792e6e6574"
+#define VENTOY_SYS_ACPI    "/sys/firmware/acpi/tables/VTOY"
 
 ventoy_image_location * ventoy_get_location_by_lsexfat(const char *diskname, int part, const char *filename);
 
 static int format = 0;
 int verbose = 0;
 ventoy_guid vtoy_guid = VENTOY_GUID;
+static const char *vtoy_fs_type[] = 
+{
+    "exfat", "ntfs", "ext", "xfs", "udf", "fat"
+};
 
+int vtoy_os_param_from_acpi(ventoy_os_param *param)
+{
+    int fd;
+    acpi_table_header acpi;
+
+    debug("vtoy_os_param_from_acpi %s\n", VENTOY_SYS_ACPI);
+
+    if (access(VENTOY_SYS_ACPI, F_OK) < 0)
+    {
+        debug("%s acpi table NOT exist\n", "VTOY");
+        return 1;
+    }
+
+    memset(param, 0, sizeof(ventoy_os_param));
+
+    fd = open(VENTOY_SYS_ACPI, O_RDONLY | O_BINARY);
+    if (fd >= 0)
+    {
+        read(fd, &acpi, sizeof(acpi_table_header));
+        read(fd, param, sizeof(ventoy_os_param));
+        close(fd);
+
+        if (0 == vtoy_check_os_param(param))
+        {
+            return 0;
+        }
+
+        return 1;
+    }
+    else
+    {
+        debug("failed to open VTOY acpi table %d\n", errno);
+        return 1;
+    }
+}
 
 int vtoy_os_param_from_efivar(ventoy_os_param *param)
 {
@@ -153,7 +193,7 @@ int vtoy_os_param_from_phymem(ventoy_os_param *param)
     return rc;
 }
 
-static int vtoy_get_disk_guid(const char *diskname, uint8_t *vtguid)
+static int vtoy_get_disk_guid(const char *diskname, uint8_t *vtguid, uint8_t *vtsig)
 {
     int i = 0;
     int fd = 0;
@@ -166,6 +206,8 @@ static int vtoy_get_disk_guid(const char *diskname, uint8_t *vtguid)
     {
         lseek(fd, 0x180, SEEK_SET);
         read(fd, vtguid, 16);
+        lseek(fd, 0x1b8, SEEK_SET);
+        read(fd, vtsig, 4);
         close(fd);
 
         debug("GUID for %s: <", devdisk);
@@ -290,12 +332,13 @@ static int vtoy_find_disk_by_size(unsigned long long size, char *diskname, int b
     return rc;    
 }
 
-static int vtoy_find_disk_by_guid(uint8_t *guid, char *diskname, int buflen)
+static int vtoy_find_disk_by_guid(ventoy_os_param *param, char *diskname, int buflen)
 {
     int rc = 0;
     int count = 0;
     DIR* dir = NULL;
     struct dirent* p = NULL;
+    uint8_t vtsig[4];
     uint8_t vtguid[16];
 
     dir = opendir("/sys/block");
@@ -313,8 +356,9 @@ static int vtoy_find_disk_by_guid(uint8_t *guid, char *diskname, int buflen)
         }
     
         memset(vtguid, 0, sizeof(vtguid));
-        rc = vtoy_get_disk_guid(p->d_name, vtguid);
-        if (rc == 0 && memcmp(vtguid, guid, 16) == 0)
+        rc = vtoy_get_disk_guid(p->d_name, vtguid, vtsig);
+        if (rc == 0 && memcmp(vtguid, param->vtoy_disk_guid, 16) == 0 &&
+            memcmp(vtsig, param->vtoy_disk_signature, 4) == 0)
         {
             snprintf(diskname, buflen, "%s", p->d_name);
             count++;
@@ -332,11 +376,11 @@ int vtoy_find_disk(ventoy_os_param *param, char *diskname, int buflen)
     cnt = vtoy_find_disk_by_size(param->vtoy_disk_size, diskname, buflen);
     if (cnt > 1)
     {
-        cnt = vtoy_find_disk_by_guid(param->vtoy_disk_guid, diskname, buflen);
+        cnt = vtoy_find_disk_by_guid(param, diskname, buflen);
     }
     else if (cnt == 0)
     {
-        cnt = vtoy_find_disk_by_guid(param->vtoy_disk_guid, diskname, buflen);
+        cnt = vtoy_find_disk_by_guid(param, diskname, buflen);
         debug("find 0 disk by size, try with guid cnt=%d...\n", cnt);
     }
 
@@ -385,7 +429,7 @@ static ventoy_image_location * ventoy_get_location_by_phymem(ventoy_os_param *pa
     mapbuf = (char *)mmap(NULL, param->vtoy_img_location_len, PROT_READ, MMAP_FLAGS, fd, param->vtoy_img_location_addr);
     if (mapbuf == NULL || (uint32_t)(unsigned long)mapbuf == 0xFFFFFFFF)
     {
-        debug("mmap failed, NULL %d  %p\n", errno, mapbuf);
+        debug("mmap failed, NULL %d 0x%lx %p\n", errno, (unsigned long)param->vtoy_img_location_addr, mapbuf);
         close(fd);
         return NULL;
     }
@@ -399,14 +443,62 @@ static ventoy_image_location * ventoy_get_location_by_phymem(ventoy_os_param *pa
     return location;
 }
 
+static ventoy_image_location * ventoy_get_location_by_acpi(ventoy_os_param *param)
+{
+    int fd = 0;
+    ventoy_os_param acpiparam;
+    ventoy_image_location *location = NULL;
+
+    debug("get image location by acpi\n");
+
+    if (vtoy_os_param_from_acpi(&acpiparam))
+    {
+        return NULL;
+    }
+
+    debug("param->vtoy_img_location: [0x%lx %u]\n", (unsigned long)param->vtoy_img_location_addr, param->vtoy_img_location_len);
+    debug("acpiparam.vtoy_img_location: [0x%lx %u]\n", (unsigned long)acpiparam.vtoy_img_location_addr, acpiparam.vtoy_img_location_len);
+
+    if (acpiparam.vtoy_img_location_len == 0)
+    {
+        return NULL;
+    }
+
+    location = (ventoy_image_location *)malloc(acpiparam.vtoy_img_location_len);
+    if (!location)
+    {
+        return NULL;
+    }
+    
+    fd = open(VENTOY_SYS_ACPI, O_RDONLY | O_BINARY);
+    if (fd < 0)
+    {
+        debug("Failed to open %s %d\n", VENTOY_SYS_ACPI, errno);
+        free(location);
+        return NULL;
+    }
+
+    lseek(fd, sizeof(acpi_table_header) + sizeof(ventoy_os_param), SEEK_SET);
+    read(fd, location, acpiparam.vtoy_img_location_len);
+
+    close(fd);
+
+    return location;
+}
+
 int vtoy_print_image_location(ventoy_os_param *param, char *diskname)
 {
     int i;
+    int fd = 0;
+    int partflag = 0;
     unsigned long long start;
     unsigned long long count;
+    unsigned long long partstart;
     ventoy_image_location *location = NULL;
     ventoy_image_disk_region *region = NULL;
     char dmdisk[256] = {0};
+    char sysstart[256] = {0};
+    char valuebuf[64] = {0};
 
     snprintf(dmdisk, sizeof(dmdisk) - 1, "/dev/%s", diskname);
     
@@ -419,6 +511,11 @@ int vtoy_print_image_location(ventoy_os_param *param, char *diskname)
      */
     
     location = ventoy_get_location_by_phymem(param);
+    if (!location)
+    {
+        location = ventoy_get_location_by_acpi(param);
+    }
+
     if (!location)
     {
         if (param->vtoy_disk_part_type == 0)
@@ -447,18 +544,58 @@ int vtoy_print_image_location(ventoy_os_param *param, char *diskname)
         printf("=== ventoy image location ===\n");
     }
 
+    if (strstr(diskname, "nvme") || strstr(diskname, "mmc"))
+    {
+        partflag = 1;
+        snprintf(sysstart, sizeof(sysstart) - 1, "/sys/class/block/%sp%u/start", diskname, param->vtoy_disk_part_id);
+        
+    }
+    else
+    {
+        snprintf(sysstart, sizeof(sysstart) - 1, "/sys/class/block/%s%u/start", diskname, param->vtoy_disk_part_id);
+    }
+
+    partstart = 2048;
+    if (access(sysstart, F_OK) >= 0)
+    {
+        debug("get part start from sysfs for %s\n", sysstart);
+        
+        fd = open(sysstart, O_RDONLY | O_BINARY);
+        if (fd >= 0)
+        {
+            read(fd, valuebuf, sizeof(valuebuf));
+            partstart = strtoull(valuebuf, NULL, 10);
+            close(fd);
+        }
+    }
+    else
+    {
+        debug("%s not exist \n", sysstart);
+    }
+
     /* print location in dmsetup table format */
     for (i = 0; i < (int)location->region_count; i++)
     {
         region = location->regions + i;
         start = region->image_start_sector;
         count = region->image_sector_count;
-        
-        printf("%llu %llu linear %s %llu\n", 
-               start * location->image_sector_size / location->disk_sector_size,
-               count * location->image_sector_size / location->disk_sector_size,
-               dmdisk,
-               (unsigned long long)region->disk_start_sector);
+
+        if (partflag)
+        {
+            printf("%llu %llu linear %sp%u %llu\n", 
+                   start * location->image_sector_size / location->disk_sector_size,
+                   count * location->image_sector_size / location->disk_sector_size,
+                   dmdisk, param->vtoy_disk_part_id,
+                   (unsigned long long)region->disk_start_sector - partstart);
+        }
+        else
+        {
+            printf("%llu %llu linear %s%u %llu\n", 
+                   start * location->image_sector_size / location->disk_sector_size,
+                   count * location->image_sector_size / location->disk_sector_size,
+                   dmdisk, param->vtoy_disk_part_id,
+                   (unsigned long long)region->disk_start_sector - partstart);
+        }
     }
 
     free(location);
@@ -469,13 +606,9 @@ int vtoy_print_os_param(ventoy_os_param *param, char *diskname)
 {
     const char *fs = "unknown";
 
-    if (param->vtoy_disk_part_type == 0)
+    if (param->vtoy_disk_part_type < sizeof(vtoy_fs_type) / sizeof(vtoy_fs_type[0]))
     {
-        fs = "exfat";
-    }
-    else if (param->vtoy_disk_part_type == 1)
-    {
-        fs = "ntfs";
+        fs = vtoy_fs_type[param->vtoy_disk_part_type];
     }
 
     printf("=== ventoy runtime data ===\n");
@@ -503,6 +636,7 @@ void print_usage(void)
     printf("  none   Only print ventoy runtime data\n");
     printf("  -l     Print ventoy runtime data and image location table\n");
     printf("  -L     Only print image location table (used to generate dmsetup table)\n");
+    printf("  -c     Check whether ventoy runtime data exist\n");
     printf("  -v     Verbose, print additional debug info\n");
     printf("  -h     Print this help info\n");
     printf("\n");
@@ -513,10 +647,11 @@ int main(int argc, char **argv)
 {
     int rc;
     int ch;
+    int check = 0;
     char diskname[256] = { 0 };
     ventoy_os_param param;
 
-    while ((ch = getopt(argc, argv, "l::L::v::h::")) != -1)
+    while ((ch = getopt(argc, argv, "l::L::c::v::h::")) != -1)
     {
         if (ch == 'l')
         {
@@ -525,6 +660,10 @@ int main(int argc, char **argv)
         else if (ch == 'L')
         {
             format = 2;
+        }
+        else if (ch == 'c')
+        {
+            check = 1;
         }
         else if (ch == 'v')
         {
@@ -556,8 +695,17 @@ int main(int argc, char **argv)
 
     if (rc)
     {
-        fprintf(stderr, "ventoy runtime data not found\n");
-        return rc;
+        rc = vtoy_os_param_from_acpi(&param);
+        if (rc)
+        {
+            fprintf(stderr, "ventoy runtime data not found\n");
+            return rc;            
+        }    
+    }
+
+    if (check == 1)
+    {
+        return 0;
     }
 
     rc = vtoy_find_disk(&param, diskname, (int)(sizeof(diskname)-1));
