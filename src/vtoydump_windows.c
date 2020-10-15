@@ -236,6 +236,43 @@ int vtoy_os_param_from_ibft(ventoy_os_param *param)
     return 1;
 }
 
+int vtoy_os_param_from_acpi(ventoy_os_param *param)
+{   
+    UINT i = 0;
+    UINT j = 0;
+    UINT DataSize = 0;
+    DWORD ErrorCode = 0;
+    UINT8 *DataBuf = NULL;
+
+    DataSize = GetSystemFirmwareTable('ACPI', 'YOTV', NULL, 0);
+    debug("get ACPI VTOY table size:%u code:%u\n", DataSize, GetLastError());    
+
+    DataBuf = malloc(DataSize);
+    if (!DataBuf)
+    {
+        return 1;
+    }
+
+    DataSize = GetSystemFirmwareTable('ACPI', 'YOTV', DataBuf, DataSize);
+    ErrorCode = GetLastError();
+    debug("get ACPI VTOY table size:%u code:%u\n", DataSize, ErrorCode);    
+
+    if (ErrorCode == ERROR_SUCCESS)
+    {
+        for (j = 0; j < DataSize; j++)
+        {
+            if (0 == vtoy_check_os_param((ventoy_os_param *)(DataBuf + j)))
+            {
+                debug("find ventoy os pararm at VTOY offset %d\n", j);
+                memcpy(param, DataBuf + j, sizeof(ventoy_os_param));
+                return 0;
+            }
+        }
+    }
+
+    return 1;
+}
+
 static int vtoy_is_file_exist(const CHAR *FilePath)
 {
     HANDLE hFile;
@@ -710,6 +747,11 @@ int main(int argc, char **argv)
     {
         debug("current is legacy bios system, get os pararm from ibft\n");
         rc = vtoy_os_param_from_ibft(&param);
+    }
+
+    if (rc)
+    {
+        rc = vtoy_os_param_from_acpi(&param);
     }
 
     if (rc)
