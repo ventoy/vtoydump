@@ -197,7 +197,7 @@ static int vtoy_get_disk_guid(const char *diskname, uint8_t *vtguid, uint8_t *vt
 {
     int i = 0;
     int fd = 0;
-    char devdisk[128] = {0};
+    char devdisk[256] = {0};
 
     snprintf(devdisk, sizeof(devdisk) - 1, "/dev/%s", diskname);
     
@@ -682,26 +682,27 @@ int main(int argc, char **argv)
 
     memset(&param, 0, sizeof(ventoy_os_param));
 
-    if (access(SYS_EFI, F_OK) >= 0)
+    rc = vtoy_os_param_from_acpi(&param);
+
+    if (rc)
     {
-        debug("current is efi system, get os pararm from efivar\n");
-        rc = vtoy_os_param_from_efivar(&param);
-    }
-    else
-    {
-        debug("current is legacy bios system, get os pararm from phymem\n");
-        rc = vtoy_os_param_from_phymem(&param);
+        if (access(SYS_EFI, F_OK) >= 0)
+        {
+            debug("current is efi system, get os pararm from efivar\n");
+            rc = vtoy_os_param_from_efivar(&param);
+        }
+        else
+        {
+            debug("current is legacy bios system, get os pararm from phymem\n");
+            rc = vtoy_os_param_from_phymem(&param);
+        }
     }
 
     if (rc)
     {
-        rc = vtoy_os_param_from_acpi(&param);
-        if (rc)
-        {
-            fprintf(stderr, "ventoy runtime data not found\n");
-            return rc;            
-        }    
-    }
+        fprintf(stderr, "ventoy runtime data not found\n");
+        return rc;            
+    }    
 
     if (check == 1)
     {
