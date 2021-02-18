@@ -544,7 +544,7 @@ int vtoy_print_image_location(ventoy_os_param *param, char *diskname)
         printf("=== ventoy image location ===\n");
     }
 
-    if (strstr(diskname, "nvme") || strstr(diskname, "mmc"))
+    if (strstr(diskname, "nvme") || strstr(diskname, "mmc") || strstr(diskname, "nbd"))
     {
         partflag = 1;
         snprintf(sysstart, sizeof(sysstart) - 1, "/sys/class/block/%sp%u/start", diskname, param->vtoy_disk_part_id);
