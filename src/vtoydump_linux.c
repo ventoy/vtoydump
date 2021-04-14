@@ -369,21 +369,47 @@ static int vtoy_find_disk_by_guid(ventoy_os_param *param, char *diskname, int bu
     return count;    
 }
 
+static int vtoy_check_device(ventoy_os_param *param, const char *device)
+{
+    uint8_t vtguid[16] = {0};
+    uint8_t vtsig[4] = {0};
+
+    debug("vtoy_check_device for <%s>\n", device);
+
+    vtoy_get_disk_guid(device, vtguid, vtsig);
+
+    if (memcmp(vtguid, param->vtoy_disk_guid, 16) == 0 &&
+        memcmp(vtsig, param->vtoy_disk_signature, 4) == 0)
+    {
+        debug("<%s> is right ventoy disk\n", device);
+        return 0;
+    }
+    else
+    {
+        debug("<%s> is NOT right ventoy disk\n", device);
+        return 1;
+    }
+}
+
 int vtoy_find_disk(ventoy_os_param *param, char *diskname, int buflen)
 {
     int cnt = 0;
 
     cnt = vtoy_find_disk_by_size(param->vtoy_disk_size, diskname, buflen);
-    if (cnt > 1)
+    debug("find disk by size %llu, cnt=%d...\n", (unsigned long long)param->vtoy_disk_size, cnt);
+    if (1 == cnt)
+    {
+        if (vtoy_check_device(param, diskname) != 0)
+        {
+            cnt = 0;
+        }
+    }
+    else
     {
         cnt = vtoy_find_disk_by_guid(param, diskname, buflen);
+        debug("find disk by guid cnt=%d...\n", cnt);
     }
-    else if (cnt == 0)
-    {
-        cnt = vtoy_find_disk_by_guid(param, diskname, buflen);
-        debug("find 0 disk by size, try with guid cnt=%d...\n", cnt);
-    }
-
+    
     if (cnt > 1)
     {
         fprintf(stderr, "More than one disk found, Indistinguishable\n");
