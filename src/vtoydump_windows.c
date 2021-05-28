@@ -273,11 +273,45 @@ int vtoy_os_param_from_acpi(ventoy_os_param *param)
     return 1;
 }
 
+static int IsUTF8Encode(const char *src)
+{
+    int i;
+    const UCHAR *Byte = (const UCHAR *)src;
+
+    for (i = 0; i < MAX_PATH && Byte[i]; i++)
+    {
+        if (Byte[i] > 127)
+        {
+            return 1;
+        }
+    }
+    
+    return 0;
+}
+
+static int Utf8ToUtf16(const char* src, WCHAR * dst)
+{
+    int size = (int)MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, 0);
+    return MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, size + 1);
+}
+
 static int vtoy_is_file_exist(const CHAR *FilePath)
 {
     HANDLE hFile;
+    WCHAR FilePathW[MAX_PATH];
 
-    hFile = CreateFileA(FilePath, FILE_READ_EA, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    if (IsUTF8Encode(FilePath))
+    {
+        debug("This is %s encoding\n", "utf-8");
+        memset(FilePathW, 0, sizeof(FilePathW));
+        Utf8ToUtf16(FilePath, FilePathW);
+        hFile = CreateFileW(FilePathW, FILE_READ_EA, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    }
+    else
+    {
+        debug("This is %s encoding\n", "ascii");
+        hFile = CreateFileA(FilePath, FILE_READ_EA, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    }
     if (INVALID_HANDLE_VALUE == hFile)
     {
         return 0;
