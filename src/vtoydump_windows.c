@@ -548,7 +548,15 @@ int vtoy_mount_iso(ventoy_os_param *param, const char *diskname)
     ATTACH_VIRTUAL_DISK_PARAMETERS AttachParameters;
 
     sprintf_s(FilePath, sizeof(FilePath), "%s%s", diskname, param->vtoy_img_path + 1);
-    MultiByteToWideChar(CP_ACP, 0, FilePath, (int)strlen(FilePath), wFilePath, (int)(sizeof(wFilePath) / sizeof(WCHAR)));
+
+    if (IsUTF8Encode(FilePath))
+    {
+        MultiByteToWideChar(CP_UTF8, 0, FilePath, (int)strlen(FilePath), wFilePath, (int)(sizeof(wFilePath) / sizeof(WCHAR)));        
+    }
+    else
+    {
+        MultiByteToWideChar(CP_ACP, 0, FilePath, (int)strlen(FilePath), wFilePath, (int)(sizeof(wFilePath) / sizeof(WCHAR)));
+    }
 
     debug("mount iso file %s\n", FilePath);
 
