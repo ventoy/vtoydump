@@ -757,9 +757,30 @@ int vtoy_load_nt_driver(const char *DrvBinPath)
     return rc;
 }
 
+static CHAR vtoy_find_free_drive(DWORD DriveBits)
+{
+    int i;
+    DWORD Mask;
+    DWORD Drives = GetLogicalDrives();
+
+    debug("Find free drive from 0x%08X, current drives 0x%08X\n", DriveBits, Drives);
+
+    /* Find from Z-->A */
+    for (i = 25; i >= 0; i--)
+    {
+        Mask = (DWORD)(1UL << i);
+        if ((DriveBits & Mask) > 0 && (Drives & Mask) == 0)
+        {
+            return (CHAR)('A' + i);
+        }
+    }
+
+    return 0;
+}
+
 void print_usage(void)
 {
-    printf("Usage: vtoydump [ -m[=Y] ] [ -i filepath ] [ -v ]\n");
+    printf("Usage: vtoydump [ -m[=K/0x7FFFF8] ] [ -i filepath ] [ -v ]\n");
     printf("  none  Only print ventoy runtime data\n");
     printf("  -m    Mount the iso file \n"
            "        (Not supported before Windows 8 and Windows Server 2012)\n");
@@ -777,6 +798,7 @@ int main(int argc, char **argv)
     char *pos;
     char drive = 0;
     int mountiso = 0;
+    DWORD DriveBits;
     char diskname[128] = { 0 };
     char filepath[256] = { 0 };
     ventoy_os_param param;
@@ -786,9 +808,21 @@ int main(int argc, char **argv)
         if (check_opt('m'))
         {
             mountiso = 1;
-            if (argv[ch][2] == '=' && isalpha(argv[ch][3]))
-                drive = toupper(argv[ch][3]);
-        }   
+            if (argv[ch][2] == '=')
+            {
+                if (isalpha(argv[ch][3]))
+                {
+                    drive = toupper(argv[ch][3]);
+                    debug("mount iso to %C:\n", drive);
+                }
+                else if (argv[ch][3] == '0' && argv[ch][4] == 'x')
+                {
+                    DriveBits = (DWORD)strtoul(argv[ch] + 3, NULL, 16);
+                    drive = vtoy_find_free_drive(DriveBits);
+                    debug("Choose %C: to mount iso from %08X\n", drive, DriveBits);
+                }
+            }
+        }
         else if (check_opt('i'))
         {
             ch++;
