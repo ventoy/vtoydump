@@ -528,16 +528,16 @@ int vtoy_print_os_param(ventoy_os_param *param, char *diskname)
 }
 
 #ifdef VTOY_NT5
-int vtoy_mount_iso(ventoy_os_param *param, const char *diskname)
+int vtoy_mount_iso(ventoy_os_param *param, const char *diskname, char drive)
 {
     (void)param;
     (void)diskname;
+    (void)drive;
     return 1;
 }
 #else
-int vtoy_mount_iso(ventoy_os_param *param, const char *diskname)
+int vtoy_mount_iso(ventoy_os_param *param, const char *diskname, char drive)
 {
-    CHAR Drive = 'A';
     HANDLE Handle;
     DWORD Status;
     DWORD Drives0, Drives1;
@@ -546,6 +546,13 @@ int vtoy_mount_iso(ventoy_os_param *param, const char *diskname)
     VIRTUAL_STORAGE_TYPE StorageType;
     OPEN_VIRTUAL_DISK_PARAMETERS OpenParameters;
     ATTACH_VIRTUAL_DISK_PARAMETERS AttachParameters;
+    WCHAR physicalDrive[MAX_PATH];
+    WCHAR cdromDrive[MAX_PATH];
+    DWORD physicalDriveSize = sizeof (physicalDrive);
+    WCHAR *Pos = NULL;
+    BOOL bRet = FALSE;
+    WCHAR MountPoint[] = L"A:";
+    int i;
 
     sprintf_s(FilePath, sizeof(FilePath), "%s%s", diskname, param->vtoy_img_path + 1);
 
@@ -583,31 +590,80 @@ int vtoy_mount_iso(ventoy_os_param *param, const char *diskname)
 
     debug("OpenVirtualDisk success\n");
 
-    Drives0 = GetLogicalDrives();
-
-    Status = AttachVirtualDisk(Handle, NULL, ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME, 0, &AttachParameters, NULL);
-    if (Status != ERROR_SUCCESS)
+    if (drive)
     {
-        printf("Failed to attach virtual disk ErrorCode:%u\n", Status);
-        CloseHandle(Handle);
-        return 1;        
+        Status = AttachVirtualDisk(Handle, NULL, ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME | ATTACH_VIRTUAL_DISK_FLAG_NO_DRIVE_LETTER, 0, &AttachParameters, NULL);
+        if (Status != ERROR_SUCCESS)
+        {
+            printf("Failed to attach virtual disk ErrorCode:%u\n", Status);
+            CloseHandle(Handle);
+            return 1;        
+        }
+        debug("AttachVirtualDisk success\n");
+
+        memset(physicalDrive, 0, sizeof(physicalDrive));
+        Status = GetVirtualDiskPhysicalPath(Handle, &physicalDriveSize, physicalDrive);
+        if (Status != ERROR_SUCCESS)
+        {
+            printf("Failed GetVirtualDiskPhysicalPath ErrorCode:%u", Status);
+            DetachVirtualDisk(Handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0);
+            CloseHandle(Handle);
+            return 1;
+        }
+        for (i = 0; physicalDrive[i]; i++)
+        {
+            physicalDrive[i] = towupper(physicalDrive[i]);
+        }
+        debug("GetVirtualDiskPhysicalPath success (%ls)\n", physicalDrive);
+
+        Pos = wcsstr(physicalDrive, L"CDROM");
+        if (!Pos)
+        {
+            printf("Invalid physical drive\n");
+            DetachVirtualDisk(Handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0);
+            CloseHandle(Handle);
+            return 1;
+        }
+
+        swprintf_s(cdromDrive, sizeof(cdromDrive), L"\\Device\\%ls", Pos);
+        MountPoint[0] = drive;
+        debug("cdromDrive=%ls, MountPoint=%ls\n", cdromDrive, MountPoint);
+
+        for (i = 0; i < 3 && (bRet == FALSE); i++)
+        {
+            Sleep(1000);
+            bRet = DefineDosDeviceW(DDD_RAW_TARGET_PATH, MountPoint, cdromDrive);
+            printf("DefineDosDevice %s\n", bRet ? "success" : "failed");
+        }
     }
-    
-    debug("AttachVirtualDisk success\n");
-    do
+    else
     {
-        Sleep(100);
-        Drives1 = GetLogicalDrives();
-    } while (Drives1 == Drives0);
+        Drives0 = GetLogicalDrives();
+        Status = AttachVirtualDisk(Handle, NULL, ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME, 0, &AttachParameters, NULL);
+        if (Status != ERROR_SUCCESS)
+        {
+            printf("Failed to attach virtual disk ErrorCode:%u\n", Status);
+            CloseHandle(Handle);
+            return 1;        
+        }
+        debug("AttachVirtualDisk success\n");
 
-    Drives0 ^= Drives1;
-    while ((Drives0 & 0x01) == 0)
-    {
-        Drive++;
-        Drives0 >>= 1;
+        drive = 'A';
+        do
+        {
+            Sleep(100);
+            Drives1 = GetLogicalDrives();
+        } while (Drives1 == Drives0);
+
+        Drives0 ^= Drives1;
+        while ((Drives0 & 0x01) == 0)
+        {
+            drive++;
+            Drives0 >>= 1;
+        }
     }
 
-    printf("%c: %s\n", Drive, FilePath);
+    printf("%c: %s\n", drive, FilePath);
 
     CloseHandle(Handle);
     return 0;
@@ -703,7 +759,7 @@ int vtoy_load_nt_driver(const char *DrvBinPath)
 
 void print_usage(void)
 {
-    printf("Usage: vtoydump [ -m ] [ -i filepath ] [ -v ]\n");
+    printf("Usage: vtoydump [ -m[=Y] ] [ -i filepath ] [ -v ]\n");
     printf("  none  Only print ventoy runtime data\n");
     printf("  -m    Mount the iso file \n"
            "        (Not supported before Windows 8 and Windows Server 2012)\n");
@@ -719,6 +775,7 @@ int main(int argc, char **argv)
     int ch;
     int fromfile = 0;
     char *pos;
+    char drive = 0;
     int mountiso = 0;
     char diskname[128] = { 0 };
     char filepath[256] = { 0 };
@@ -728,7 +785,9 @@ int main(int argc, char **argv)
     {
         if (check_opt('m'))
         {
-            mountiso = 1;           
+            mountiso = 1;
+            if (argv[ch][2] == '=' && isalpha(argv[ch][3]))
+                drive = toupper(argv[ch][3]);
         }   
         else if (check_opt('i'))
         {
@@ -818,7 +877,7 @@ int main(int argc, char **argv)
         {
             if (IsWindows8OrGreater())
             {
-                rc = vtoy_mount_iso(&param, diskname);
+                rc = vtoy_mount_iso(&param, diskname, drive);
             }
             else
             {
