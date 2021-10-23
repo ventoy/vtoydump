@@ -16,11 +16,23 @@ vtoydump [ -lL ] [ -v ]
   
 For Windows:  
 ```
-vtoydump.exe [ -m ] [ -i filepath ] [ -v ]  
+vtoydump.exe [ -m=[K/0xFFFF] ] [ -i filepath ] [ -v ]  
     none  Only print ventoy runtime data  
     -m    Mount the iso file (Not supported before Windows 8 and Windows Server 2012)  
     -i    Load .sys driver  
     -v    Verbose, print additional debug info 
+
+
+Examples for -m option:
+vtoydump.exe -m
+Mount the iso file to any free drive letter
+
+vtoydump.exe -m=Y
+Mount the iso file to Y: drive
+
+vtoydump.exe -m=0x7FFFF8
+Select a free drive from D E F G H I J K L M N O P Q R S T U V W and use it to mount the ISO file.
+
 ```
 
 
