@@ -27,9 +27,180 @@
 #include <virtdisk.h>
 #include <winioctl.h>
 #include <VersionHelpers.h>
+#include "fat_filelib.h"
 
-static int verbose = 0;
+#pragma pack(1)
+typedef struct PART_TABLE
+{
+    UINT8  Active; // 0x00  0x80
+
+    UINT8  StartHead;
+    UINT16 StartSector : 6;
+    UINT16 StartCylinder : 10;
+
+    UINT8  FsFlag;
+
+    UINT8  EndHead;
+    UINT16 EndSector : 6;
+    UINT16 EndCylinder : 10;
+
+    UINT32 StartSectorId;
+    UINT32 SectorCount;
+}PART_TABLE;
+
+typedef struct MBR_HEAD
+{
+    UINT8 BootCode[446];
+    PART_TABLE PartTbl[4];
+    UINT8 Byte55;
+    UINT8 ByteAA;
+}MBR_HEAD;
+
+typedef struct VTOY_GPT_HDR
+{
+    CHAR   Signature[8]; /* EFI PART */
+    UINT8  Version[4];
+    UINT32 Length;
+    UINT32 Crc;
+    UINT8  Reserved1[4];
+    UINT64 EfiStartLBA;
+    UINT64 EfiBackupLBA;
+    UINT64 PartAreaStartLBA;
+    UINT64 PartAreaEndLBA;
+    GUID   DiskGuid;
+    UINT64 PartTblStartLBA;
+    UINT32 PartTblTotNum;
+    UINT32 PartTblEntryLen;
+    UINT32 PartTblCrc;
+    UINT8  Reserved2[420];
+}VTOY_GPT_HDR;
+
+typedef struct VTOY_GPT_PART_TBL
+{
+    GUID   PartType;
+    GUID   PartGuid;
+    UINT64 StartLBA;
+    UINT64 LastLBA;
+    UINT64 Attr;
+    UINT16 Name[36];
+}VTOY_GPT_PART_TBL;
+
+typedef struct VTOY_GPT_INFO
+{
+    MBR_HEAD MBR;
+    VTOY_GPT_HDR Head;
+    VTOY_GPT_PART_TBL PartTbl[128];
+}VTOY_GPT_INFO;
+#pragma pack()
+
+#define SAFE_CLOSE_HANDLE(handle) \
+{\
+if (handle != INVALID_HANDLE_VALUE) \
+{\
+    CloseHandle(handle); \
+    (handle) = INVALID_HANDLE_VALUE; \
+}\
+}
+
+#define LASTERR     GetLastError()
+
+int verbose = 0;
 static ventoy_guid vtoy_guid = VENTOY_GUID;
+static INT g_system_bit = VTOY_BIT;
+
+static int IsUTF8Encode(const char *src)
+{
+    int i;
+    const UCHAR *Byte = (const UCHAR *)src;
+
+    for (i = 0; i < MAX_PATH && Byte[i]; i++)
+    {
+        if (Byte[i] > 127)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int Utf8ToUtf16(const char* src, WCHAR * dst)
+{
+    int size = (int)MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, 0);
+    return MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, size + 1);
+}
+
+static int vtoy_is_file_exist(const CHAR *FilePathA)
+{
+    HANDLE hFile;
+    DWORD Attr;
+    BOOL bRet = FALSE;
+    int UTF8 = 0;
+    WCHAR FilePathW[MAX_PATH];
+
+    UTF8 = IsUTF8Encode(FilePathA);
+    if (UTF8)
+    {
+        Utf8ToUtf16(FilePathA, FilePathW);
+        hFile = CreateFileW(FilePathW, FILE_READ_EA, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    }
+    else
+    {
+        hFile = CreateFileA(FilePathA, FILE_READ_EA, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    }
+    if (INVALID_HANDLE_VALUE == hFile)
+    {
+        goto out;
+    }
+
+    CloseHandle(hFile);
+
+    if (UTF8)
+    {
+        Attr = GetFileAttributesW(FilePathW);
+    }
+    else
+    {
+        Attr = GetFileAttributesA(FilePathA);
+    }
+
+    if (Attr & FILE_ATTRIBUTE_DIRECTORY)
+    {
+        goto out;
+    }
+
+    bRet = TRUE;
+
+out:
+    debug("File <%s> %s\n", FilePathA, (bRet ? "exist" : "NOT exist"));
+    return bRet;
+}
+
+static int SaveBuffer2File(const char *Fullpath, void *Buffer, DWORD Length)
+{
+    int rc = 1;
+    DWORD dwSize;
+    HANDLE Handle;
+
+    debug("SaveBuffer2File <%s> len:%u\n", Fullpath, Length);
+
+    Handle = CreateFileA(Fullpath, GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, 0, CREATE_NEW, 0, 0);
+    if (Handle == INVALID_HANDLE_VALUE)
+    {
+        debug("Could not create new file, error:%u\n", LASTERR);
+        goto End;
+    }
+
+    WriteFile(Handle, Buffer, Length, &dwSize, NULL);
+
+    rc = 0;
+
+End:
+    SAFE_CLOSE_HANDLE(Handle);
+
+    return rc;
+}
 
 //Grant Privilege
 static int vtoy_grant_privilege(void)
@@ -273,54 +444,6 @@ int vtoy_os_param_from_acpi(ventoy_os_param *param)
     return 1;
 }
 
-static int IsUTF8Encode(const char *src)
-{
-    int i;
-    const UCHAR *Byte = (const UCHAR *)src;
-
-    for (i = 0; i < MAX_PATH && Byte[i]; i++)
-    {
-        if (Byte[i] > 127)
-        {
-            return 1;
-        }
-    }
-    
-    return 0;
-}
-
-static int Utf8ToUtf16(const char* src, WCHAR * dst)
-{
-    int size = (int)MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, 0);
-    return MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, size + 1);
-}
-
-static int vtoy_is_file_exist(const CHAR *FilePath)
-{
-    HANDLE hFile;
-    WCHAR FilePathW[MAX_PATH];
-
-    if (IsUTF8Encode(FilePath))
-    {
-        debug("This is %s encoding\n", "utf-8");
-        memset(FilePathW, 0, sizeof(FilePathW));
-        Utf8ToUtf16(FilePath, FilePathW);
-        hFile = CreateFileW(FilePathW, FILE_READ_EA, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
-    }
-    else
-    {
-        debug("This is %s encoding\n", "ascii");
-        hFile = CreateFileA(FilePath, FILE_READ_EA, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
-    }
-    if (INVALID_HANDLE_VALUE == hFile)
-    {
-        return 0;
-    }
-
-    CloseHandle(hFile);
-    return 1;
-}
-
 #if 0
 static int GetPhyDiskInfo(const char *LogicalDrive, UINT64 *pDiskSize, UINT8 UUID[16])
 {
@@ -389,7 +512,7 @@ static int GetPhyDiskInfo(const char *LogicalDrive, UINT64 *pDiskSize, UINT8 UUI
 }
 #endif
 
-static int GetPhyDiskUUID(const char *LogicalDrive, UINT8 UUID[16])
+static int GetPhyDiskUUID(const char *LogicalDrive, int *pPhyDrive, UINT8 UUID[16])
 {
     BOOL Ret;
     DWORD dwSize;
@@ -446,6 +569,11 @@ static int GetPhyDiskUUID(const char *LogicalDrive, UINT8 UUID[16])
         return 1;
     }
 
+    if (pPhyDrive)
+    {
+        *pPhyDrive = (int)(DiskExtents.Extents[0].DiskNumber);
+    }
+
     memcpy(UUID, SectorBuf + 0x180, 16);
     CloseHandle(Handle);
     return 0;
@@ -462,9 +590,10 @@ static void vtoy_dump_uuid(const char *prefix, UINT8 *uuid)
     }
 }
 
-int vtoy_find_disk(ventoy_os_param *param, char *diskname, int buflen)
+int vtoy_find_disk(ventoy_os_param *param, int *pPhyDrive, char *diskname, int buflen)
 {
     int rc = 1;
+    int PhyDrive;
     DWORD DataSize = 0;
     CHAR *Pos = NULL; 
     CHAR *StringBuf = NULL;    
@@ -485,7 +614,7 @@ int vtoy_find_disk(ventoy_os_param *param, char *diskname, int buflen)
 
     for (Pos = StringBuf; *Pos; Pos += strlen(Pos) + 1)
     {
-        if (GetPhyDiskUUID(Pos, UUID) != 0)
+        if (GetPhyDiskUUID(Pos, &PhyDrive, UUID) != 0)
         {
             continue;
         }
@@ -517,6 +646,11 @@ int vtoy_find_disk(ventoy_os_param *param, char *diskname, int buflen)
         break;
     }
 
+    if (pPhyDrive)
+    {
+        *pPhyDrive = PhyDrive;
+    }
+
     free(StringBuf);
     return rc;
 }
@@ -526,149 +660,6 @@ int vtoy_print_os_param(ventoy_os_param *param, char *diskname)
     printf("%s%s\n", diskname, param->vtoy_img_path + 1);
     return 0;
 }
-
-#ifdef VTOY_NT5
-int vtoy_mount_iso(ventoy_os_param *param, const char *diskname, char drive)
-{
-    (void)param;
-    (void)diskname;
-    (void)drive;
-    return 1;
-}
-#else
-int vtoy_mount_iso(ventoy_os_param *param, const char *diskname, char drive)
-{
-    HANDLE Handle;
-    DWORD Status;
-    DWORD Drives0, Drives1;
-    CHAR FilePath[512];
-    WCHAR wFilePath[512] = { 0 };
-    VIRTUAL_STORAGE_TYPE StorageType;
-    OPEN_VIRTUAL_DISK_PARAMETERS OpenParameters;
-    ATTACH_VIRTUAL_DISK_PARAMETERS AttachParameters;
-    WCHAR physicalDrive[MAX_PATH];
-    WCHAR cdromDrive[MAX_PATH];
-    DWORD physicalDriveSize = sizeof (physicalDrive);
-    WCHAR *Pos = NULL;
-    BOOL bRet = FALSE;
-    WCHAR MountPoint[] = L"A:";
-    int i;
-
-    sprintf_s(FilePath, sizeof(FilePath), "%s%s", diskname, param->vtoy_img_path + 1);
-
-    if (IsUTF8Encode(FilePath))
-    {
-        MultiByteToWideChar(CP_UTF8, 0, FilePath, (int)strlen(FilePath), wFilePath, (int)(sizeof(wFilePath) / sizeof(WCHAR)));        
-    }
-    else
-    {
-        MultiByteToWideChar(CP_ACP, 0, FilePath, (int)strlen(FilePath), wFilePath, (int)(sizeof(wFilePath) / sizeof(WCHAR)));
-    }
-
-    debug("mount iso file %s\n", FilePath);
-
-    memset(&StorageType, 0, sizeof(StorageType));
-    memset(&OpenParameters, 0, sizeof(OpenParameters));
-    memset(&AttachParameters, 0, sizeof(AttachParameters));
-
-    OpenParameters.Version = OPEN_VIRTUAL_DISK_VERSION_1;
-    AttachParameters.Version = ATTACH_VIRTUAL_DISK_VERSION_1;
-
-    Status = OpenVirtualDisk(&StorageType, wFilePath, VIRTUAL_DISK_ACCESS_READ, 0, &OpenParameters, &Handle);
-    if (Status != ERROR_SUCCESS)
-    {
-        if (ERROR_VIRTDISK_PROVIDER_NOT_FOUND == Status)
-        {
-            printf("VirtualDisk for ISO file is not supported in current system\n");
-        }
-        else
-        {
-            printf("Failed to open virtual disk ErrorCode:%u\n", Status);
-        }
-        return 1;
-    }
-
-    debug("OpenVirtualDisk success\n");
-
-    if (drive)
-    {
-        Status = AttachVirtualDisk(Handle, NULL, ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME | ATTACH_VIRTUAL_DISK_FLAG_NO_DRIVE_LETTER, 0, &AttachParameters, NULL);
-        if (Status != ERROR_SUCCESS)
-        {
-            printf("Failed to attach virtual disk ErrorCode:%u\n", Status);
-            CloseHandle(Handle);
-            return 1;        
-        }
-        debug("AttachVirtualDisk success\n");
-
-        memset(physicalDrive, 0, sizeof(physicalDrive));
-        Status = GetVirtualDiskPhysicalPath(Handle, &physicalDriveSize, physicalDrive);
-        if (Status != ERROR_SUCCESS)
-        {
-            printf("Failed GetVirtualDiskPhysicalPath ErrorCode:%u", Status);
-            DetachVirtualDisk(Handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0);
-            CloseHandle(Handle);
-            return 1;
-        }
-        for (i = 0; physicalDrive[i]; i++)
-        {
-            physicalDrive[i] = towupper(physicalDrive[i]);
-        }
-        debug("GetVirtualDiskPhysicalPath success (%ls)\n", physicalDrive);
-
-        Pos = wcsstr(physicalDrive, L"CDROM");
-        if (!Pos)
-        {
-            printf("Invalid physical drive\n");
-            DetachVirtualDisk(Handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0);
-            CloseHandle(Handle);
-            return 1;
-        }
-
-        swprintf_s(cdromDrive, sizeof(cdromDrive), L"\\Device\\%ls", Pos);
-        MountPoint[0] = drive;
-        debug("cdromDrive=%ls, MountPoint=%ls\n", cdromDrive, MountPoint);
-
-        for (i = 0; i < 3 && (bRet == FALSE); i++)
-        {
-            Sleep(1000);
-            bRet = DefineDosDeviceW(DDD_RAW_TARGET_PATH, MountPoint, cdromDrive);
-            printf("DefineDosDevice %s\n", bRet ? "success" : "failed");
-        }
-    }
-    else
-    {
-        Drives0 = GetLogicalDrives();
-        Status = AttachVirtualDisk(Handle, NULL, ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME, 0, &AttachParameters, NULL);
-        if (Status != ERROR_SUCCESS)
-        {
-            printf("Failed to attach virtual disk ErrorCode:%u\n", Status);
-            CloseHandle(Handle);
-            return 1;        
-        }
-        debug("AttachVirtualDisk success\n");
-
-        drive = 'A';
-        do
-        {
-            Sleep(100);
-            Drives1 = GetLogicalDrives();
-        } while (Drives1 == Drives0);
-
-        Drives0 ^= Drives1;
-        while ((Drives0 & 0x01) == 0)
-        {
-            drive++;
-            Drives0 >>= 1;
-        }
-    }
-
-    printf("%c: %s\n", drive, FilePath);
-
-    CloseHandle(Handle);
-    return 0;
-}
-#endif
 
 int vtoy_load_nt_driver(const char *DrvBinPath)
 {
@@ -778,6 +769,387 @@ static CHAR vtoy_find_free_drive(DWORD DriveBits)
     return 0;
 }
 
+
+#ifdef VTOY_NT5
+int vtoy_mount_iso_by_api(ventoy_os_param *param, const char *diskname, char drive)
+{
+    (void)param;
+    (void)diskname;
+    (void)drive;
+    return 1;
+}
+int vtoy_mount_iso_by_imdisk(ventoy_os_param *param, const char *diskname, char drive, int PhyDrive)
+{
+    (void)param;
+    (void)diskname;
+    (void)drive;
+    return 1;
+}
+#else
+int vtoy_mount_iso_by_api(ventoy_os_param *param, const char *diskname, char drive)
+{
+    HANDLE Handle;
+    DWORD Status;
+    DWORD Drives0, Drives1;
+    CHAR FilePath[512];
+    WCHAR wFilePath[512] = { 0 };
+    VIRTUAL_STORAGE_TYPE StorageType;
+    OPEN_VIRTUAL_DISK_PARAMETERS OpenParameters;
+    ATTACH_VIRTUAL_DISK_PARAMETERS AttachParameters;
+    WCHAR physicalDrive[MAX_PATH];
+    WCHAR cdromDrive[MAX_PATH];
+    DWORD physicalDriveSize = sizeof (physicalDrive);
+    WCHAR *Pos = NULL;
+    BOOL bRet = FALSE;
+    WCHAR MountPoint[] = L"A:";
+    int i;
+
+    sprintf_s(FilePath, sizeof(FilePath), "%s%s", diskname, param->vtoy_img_path + 1);
+
+    if (IsUTF8Encode(FilePath))
+    {
+        MultiByteToWideChar(CP_UTF8, 0, FilePath, (int)strlen(FilePath), wFilePath, (int)(sizeof(wFilePath) / sizeof(WCHAR)));
+    }
+    else
+    {
+        MultiByteToWideChar(CP_ACP, 0, FilePath, (int)strlen(FilePath), wFilePath, (int)(sizeof(wFilePath) / sizeof(WCHAR)));
+    }
+
+    debug("vtoy_mount_iso_by_api %s\n", FilePath);
+
+    memset(&StorageType, 0, sizeof(StorageType));
+    memset(&OpenParameters, 0, sizeof(OpenParameters));
+    memset(&AttachParameters, 0, sizeof(AttachParameters));
+
+    OpenParameters.Version = OPEN_VIRTUAL_DISK_VERSION_1;
+    AttachParameters.Version = ATTACH_VIRTUAL_DISK_VERSION_1;
+
+    Status = OpenVirtualDisk(&StorageType, wFilePath, VIRTUAL_DISK_ACCESS_READ, 0, &OpenParameters, &Handle);
+    if (Status != ERROR_SUCCESS)
+    {
+        if (ERROR_VIRTDISK_PROVIDER_NOT_FOUND == Status)
+        {
+            printf("VirtualDisk for ISO file is not supported in current system\n");
+        }
+        else
+        {
+            printf("Failed to open virtual disk ErrorCode:%u\n", Status);
+        }
+        return 1;
+    }
+
+    debug("OpenVirtualDisk success\n");
+
+    if (drive)
+    {
+        Status = AttachVirtualDisk(Handle, NULL, ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME | ATTACH_VIRTUAL_DISK_FLAG_NO_DRIVE_LETTER, 0, &AttachParameters, NULL);
+        if (Status != ERROR_SUCCESS)
+        {
+            printf("Failed to attach virtual disk ErrorCode:%u\n", Status);
+            CloseHandle(Handle);
+            return 1;
+        }
+        debug("AttachVirtualDisk success\n");
+
+        memset(physicalDrive, 0, sizeof(physicalDrive));
+        Status = GetVirtualDiskPhysicalPath(Handle, &physicalDriveSize, physicalDrive);
+        if (Status != ERROR_SUCCESS)
+        {
+            printf("Failed GetVirtualDiskPhysicalPath ErrorCode:%u", Status);
+            DetachVirtualDisk(Handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0);
+            CloseHandle(Handle);
+            return 1;
+        }
+        for (i = 0; physicalDrive[i]; i++)
+        {
+            physicalDrive[i] = towupper(physicalDrive[i]);
+        }
+        debug("GetVirtualDiskPhysicalPath success (%ls)\n", physicalDrive);
+
+        Pos = wcsstr(physicalDrive, L"CDROM");
+        if (!Pos)
+        {
+            printf("Invalid physical drive\n");
+            DetachVirtualDisk(Handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0);
+            CloseHandle(Handle);
+            return 1;
+        }
+
+        swprintf_s(cdromDrive, sizeof(cdromDrive), L"\\Device\\%ls", Pos);
+        MountPoint[0] = drive;
+        debug("cdromDrive=%ls, MountPoint=%ls\n", cdromDrive, MountPoint);
+
+        for (i = 0; i < 3 && (bRet == FALSE); i++)
+        {
+            Sleep(1000);
+            bRet = DefineDosDeviceW(DDD_RAW_TARGET_PATH, MountPoint, cdromDrive);
+            printf("DefineDosDevice %s\n", bRet ? "success" : "failed");
+        }
+    }
+    else
+    {
+        Drives0 = GetLogicalDrives();
+        Status = AttachVirtualDisk(Handle, NULL, ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME, 0, &AttachParameters, NULL);
+        if (Status != ERROR_SUCCESS)
+        {
+            printf("Failed to attach virtual disk ErrorCode:%u\n", Status);
+            CloseHandle(Handle);
+            return 1;
+        }
+        debug("AttachVirtualDisk success\n");
+
+        drive = 'A';
+        do
+        {
+            Sleep(100);
+            Drives1 = GetLogicalDrives();
+        } while (Drives1 == Drives0);
+
+        Drives0 ^= Drives1;
+        while ((Drives0 & 0x01) == 0)
+        {
+            drive++;
+            Drives0 >>= 1;
+        }
+    }
+
+    printf("%c: %s\n", drive, FilePath);
+
+    CloseHandle(Handle);
+    return 0;
+}
+
+UINT64 GetVentoyEfiPartStartSector(HANDLE hDrive)
+{
+    BOOL bRet;
+    DWORD dwSize;
+    MBR_HEAD MBR;
+    VTOY_GPT_INFO *pGpt = NULL;
+    UINT64 StartSector = 0;
+
+    SetFilePointer(hDrive, 0, NULL, FILE_BEGIN);
+
+    bRet = ReadFile(hDrive, &MBR, sizeof(MBR), &dwSize, NULL);
+    debug("Read MBR Ret:%u Size:%u code:%u\n", bRet, dwSize, GetLastError());
+
+    if ((!bRet) || (dwSize != sizeof(MBR)))
+    {
+        0;
+    }
+
+    if (MBR.PartTbl[0].FsFlag == 0xEE)
+    {
+        debug("GPT partition style\n");
+
+        pGpt = malloc(sizeof(VTOY_GPT_INFO));
+        if (!pGpt)
+        {
+            return 0;
+        }
+
+        SetFilePointer(hDrive, 0, NULL, FILE_BEGIN);
+        bRet = ReadFile(hDrive, pGpt, sizeof(VTOY_GPT_INFO), &dwSize, NULL);
+        if ((!bRet) || (dwSize != sizeof(VTOY_GPT_INFO)))
+        {
+            debug("Failed to read gpt info %d %u %d\n", bRet, dwSize, GetLastError());
+            return 0;
+        }
+
+        StartSector = pGpt->PartTbl[1].StartLBA;
+        free(pGpt);
+    }
+    else
+    {
+        debug("MBR partition style\n");
+        StartSector = MBR.PartTbl[1].StartSectorId;
+    }
+
+    debug("GetVentoyEfiPart StartSector: %llu\n", StartSector);
+    return StartSector;
+}
+
+static HANDLE g_FatPhyDrive;
+static UINT64 g_Part2StartSec;
+
+static int CopyFileFromFatDisk(const CHAR* SrcFile, const CHAR *DstFile)
+{
+    int rc = 1;
+    int size = 0;
+    char *buf = NULL;
+    void *flfile = NULL;
+
+    debug("CopyFileFromFatDisk (%s)==>(%s)\n", SrcFile, DstFile);
+
+    flfile = fl_fopen(SrcFile, "rb");
+    if (flfile)
+    {
+        fl_fseek(flfile, 0, SEEK_END);
+        size = (int)fl_ftell(flfile);
+        fl_fseek(flfile, 0, SEEK_SET);
+
+        buf = (char *)malloc(size);
+        if (buf)
+        {
+            fl_fread(buf, 1, size, flfile);
+
+            rc = 0;
+            SaveBuffer2File(DstFile, buf, size);
+            free(buf);
+        }
+
+        fl_fclose(flfile);
+    }
+
+    return rc;
+}
+
+static int VentoyFatDiskRead(uint32 Sector, uint8 *Buffer, uint32 SectorCount)
+{
+    DWORD dwSize;
+    BOOL bRet;
+    DWORD ReadSize;
+    LARGE_INTEGER liCurrentPosition;
+
+    liCurrentPosition.QuadPart = Sector + g_Part2StartSec;
+    liCurrentPosition.QuadPart *= 512;
+    SetFilePointerEx(g_FatPhyDrive, liCurrentPosition, &liCurrentPosition, FILE_BEGIN);
+
+    ReadSize = (DWORD)(SectorCount * 512);
+
+    bRet = ReadFile(g_FatPhyDrive, Buffer, ReadSize, &dwSize, NULL);
+    if (bRet == FALSE || dwSize != ReadSize)
+    {
+        debug("ReadFile error bRet:%u WriteSize:%u dwSize:%u ErrCode:%u\n", bRet, ReadSize, dwSize, GetLastError());
+    }
+
+    return 1;
+}
+
+
+static int VentoyRunImdisk(const char *IsoPath, const char *imdiskexe)
+{
+    CHAR Letter;
+    CHAR Cmdline[512];
+    WCHAR CmdlineW[512];
+    PROCESS_INFORMATION Pi;
+
+    debug("VentoyRunImdisk <%s> <%s>\n", IsoPath, imdiskexe);
+
+    Letter = vtoy_find_free_drive(0x7FFFF8);
+    sprintf_s(Cmdline, sizeof(Cmdline), "%s -a -o ro -f \"%s\" -m %C:", imdiskexe, IsoPath, Letter);
+    debug("mount iso to %C: use imdisk cmd <%s>\n", Letter, Cmdline);
+
+    if (IsUTF8Encode(IsoPath))
+    {
+        STARTUPINFOW Si;
+        GetStartupInfoW(&Si);
+        Si.dwFlags |= STARTF_USESHOWWINDOW;
+        Si.wShowWindow = SW_HIDE;
+
+        Utf8ToUtf16(Cmdline, CmdlineW);
+        CreateProcessW(NULL, CmdlineW, NULL, NULL, FALSE, 0, NULL, NULL, &Si, &Pi);
+
+        debug("This is UTF8 encoding\n");
+    }
+    else
+    {
+        STARTUPINFOA Si;
+        GetStartupInfoA(&Si);
+        Si.dwFlags |= STARTF_USESHOWWINDOW;
+        Si.wShowWindow = SW_HIDE;
+
+        CreateProcessA(NULL, Cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &Si, &Pi);
+
+        debug("This is ANSI encoding\n");
+    }
+
+    debug("Wait for imdisk process ...\n");
+    WaitForSingleObject(Pi.hProcess, INFINITE);
+    debug("imdisk process finished\n");
+
+    return 0;
+}
+
+int vtoy_mount_iso_by_imdisk(ventoy_os_param *param, const char *diskname, char drive, int PhyDrive)
+{
+    int rc = 1;
+    BOOL bRet;
+    DWORD dwBytes;
+    HANDLE hDrive;
+    CHAR PhyPath[MAX_PATH];
+    CHAR IsoPath[MAX_PATH];
+    GET_LENGTH_INFORMATION LengthInfo;
+
+    sprintf_s(IsoPath, sizeof(IsoPath), "%s%s", diskname, param->vtoy_img_path + 1);
+
+    debug("VentoyMountISOByImdisk %s\n", IsoPath);
+
+    if (vtoy_is_file_exist("X:\\Windows\\System32\\imdisk.exe"))
+    {
+        debug("imdisk.exe exist, use it directly...\n");
+        VentoyRunImdisk(IsoPath, "imdisk.exe");
+        return 0;
+    }
+
+    sprintf_s(PhyPath, sizeof(PhyPath), "\\\\.\\PhysicalDrive%d", PhyDrive);
+    hDrive = CreateFileA(PhyPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, 0, 0);
+    if (hDrive == INVALID_HANDLE_VALUE)
+    {
+        debug("Could not open the disk<%s>, error:%u\n", PhyPath, GetLastError());
+        goto End;
+    }
+
+    bRet = DeviceIoControl(hDrive, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &LengthInfo, sizeof(LengthInfo), &dwBytes, NULL);
+    if (!bRet)
+    {
+        debug("Could not get phy disk %s size, error:%u\n", PhyPath, GetLastError());
+        goto End;
+    }
+
+    g_FatPhyDrive = hDrive;
+    g_Part2StartSec = GetVentoyEfiPartStartSector(hDrive);
+
+    debug("Parse FAT fs...\n");
+
+    fl_init();
+
+    if (0 == fl_attach_media(VentoyFatDiskRead, NULL))
+    {
+        if (g_system_bit == 64)
+        {
+            CopyFileFromFatDisk("/ventoy/imdisk/64/imdisk.sys", "X:\\Windows\\System32\\imdisk.sys");
+            CopyFileFromFatDisk("/ventoy/imdisk/64/imdisk.exe", "X:\\Windows\\System32\\imdisk.exe");
+            CopyFileFromFatDisk("/ventoy/imdisk/64/imdisk.cpl", "X:\\Windows\\System32\\imdisk.cpl");
+        }
+        else
+        {
+            CopyFileFromFatDisk("/ventoy/imdisk/32/imdisk.sys", "X:\\Windows\\System32\\imdisk.sys");
+            CopyFileFromFatDisk("/ventoy/imdisk/32/imdisk.exe", "X:\\Windows\\System32\\imdisk.exe");
+            CopyFileFromFatDisk("/ventoy/imdisk/32/imdisk.cpl", "X:\\Windows\\System32\\imdisk.cpl");
+        }
+
+        if (vtoy_load_nt_driver("X:\\Windows\\System32\\imdisk.sys") == 0)
+        {
+            VentoyRunImdisk(IsoPath, "X:\\Windows\\System32\\imdisk.exe");
+            rc = 0;
+        }
+    }
+    else
+    {
+        debug("########## This is not a valid Ventoy disk.\n");
+    }
+    fl_shutdown();
+
+End:
+
+    SAFE_CLOSE_HANDLE(hDrive);
+
+    return rc;
+}
+
+#endif
+
+
 void print_usage(void)
 {
     printf("Usage: vtoydump [ -m[=K/0x7FFFF8] ] [ -i filepath ] [ -v ]\n");
@@ -798,6 +1170,7 @@ int main(int argc, char **argv)
     char *pos;
     char drive = 0;
     int mountiso = 0;
+    int PhyDrive = -1;
     DWORD DriveBits;
     char diskname[128] = { 0 };
     char filepath[256] = { 0 };
@@ -904,19 +1277,18 @@ int main(int argc, char **argv)
         }
     }
 
-    rc = vtoy_find_disk(&param, diskname, (int)(sizeof(diskname)-1));
+    rc = vtoy_find_disk(&param, &PhyDrive, diskname, (int)(sizeof(diskname)-1));
     if (rc == 0)
     {
         if (mountiso)
         {
             if (IsWindows8OrGreater())
             {
-                rc = vtoy_mount_iso(&param, diskname, drive);
+                rc = vtoy_mount_iso_by_api(&param, diskname, drive);
             }
             else
             {
-                printf("VirtualDisk for ISO file is not supported before Windows 8\n");
-                rc = 1;
+                rc = vtoy_mount_iso_by_imdisk(&param, diskname, drive, PhyDrive);
             }
         }
         else

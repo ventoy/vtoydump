@@ -22,13 +22,23 @@ call %VCVARSALL% x86
 
 if exist vtoydump.exe del /q vtoydump.exe
 
-cl.exe /c src/vtoydump_windows.c /I./src /GS /GL /analyze- /W3 /Gy /Zc:wchar_t /Zi /Gm- /O2 /fp:precise /D "WIN32" /D "NDEBUG" /D "_CONSOLE" /D "_LIB" /D "_UNICODE" /D "UNICODE" /errorReport:prompt /WX- /Zc:forScope /Gd /Oy- /Oi /MT /EHsc /nologo
+set CCOPT=/I./src /I./src/fat_io_lib /GS /GL /analyze- /W3 /Gy /Zc:wchar_t /Zi /Gm- /O2 /fp:precise /DFATFS_INC_FORMAT_SUPPORT=0 /DVTOY_BIT=32 /D "WIN32" /D "NDEBUG" /D "_CONSOLE" /D "_LIB" /D "_UNICODE" /D "UNICODE" /errorReport:prompt /WX- /Zc:forScope /Gd /Oy- /Oi /MT /EHsc /nologo
 
-link.exe vtoydump_windows.obj /OUT:"vtoydump.exe" /MANIFEST /LTCG /NXCOMPAT /DYNAMICBASE "VirtDisk.lib" "kernel32.lib" "user32.lib" "gdi32.lib" "winspool.lib" "comdlg32.lib" "advapi32.lib" "shell32.lib" "ole32.lib" "oleaut32.lib" "uuid.lib" "odbc32.lib" "odbccp32.lib" /DEBUG /MACHINE:X86 /OPT:REF /SAFESEH /INCREMENTAL:NO  /SUBSYSTEM:CONSOLE /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /OPT:ICF /ERRORREPORT:PROMPT /NOLOGO /TLBID:1 
+cl.exe /c src/vtoydump_windows.c %CCOPT%
+cl.exe /c src/fat_io_lib/fat_access.c  %CCOPT%
+cl.exe /c src/fat_io_lib/fat_cache.c   %CCOPT%
+cl.exe /c src/fat_io_lib/fat_filelib.c %CCOPT%
+cl.exe /c src/fat_io_lib/fat_format.c  %CCOPT%
+cl.exe /c src/fat_io_lib/fat_misc.c    %CCOPT% 
+cl.exe /c src/fat_io_lib/fat_string.c  %CCOPT%
+cl.exe /c src/fat_io_lib/fat_table.c   %CCOPT% 
+cl.exe /c src/fat_io_lib/fat_write.c   %CCOPT%
+
+link.exe vtoydump_windows.obj fat_access.obj fat_cache.obj fat_filelib.obj fat_format.obj fat_misc.obj fat_string.obj fat_table.obj fat_write.obj /OUT:"vtoydump.exe" /MANIFEST /LTCG /NXCOMPAT /DYNAMICBASE "VirtDisk.lib" "kernel32.lib" "user32.lib" "gdi32.lib" "winspool.lib" "comdlg32.lib" "advapi32.lib" "shell32.lib" "ole32.lib" "oleaut32.lib" "uuid.lib" "odbc32.lib" "odbccp32.lib" /DEBUG /MACHINE:X86 /OPT:REF /SAFESEH /INCREMENTAL:NO  /SUBSYSTEM:CONSOLE /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /OPT:ICF /ERRORREPORT:PROMPT /NOLOGO /TLBID:1 
 
 del /q *.pdb
 del /q *.manifest
-del /q vtoydump_windows.obj
+del /q *.obj
 
 if not exist vtoydump.exe (
     echo Failed to build vtoydump

@@ -153,7 +153,13 @@ int vtoy_is_efi_system(void);
 int vtoy_check_os_param(ventoy_os_param *param);
 int vtoy_os_param_from_efivar(ventoy_os_param *param);
 int vtoy_os_param_from_phymem(ventoy_os_param *param);
+
+#ifdef WIN32
+int vtoy_find_disk(ventoy_os_param *param, int *pPhyDrive, char *diskname, int buflen);
+#else
 int vtoy_find_disk(ventoy_os_param *param, char *diskname, int buflen);
+#endif
+
 int vtoy_print_os_param(ventoy_os_param *param, char *diskname);
 int vtoy_print_image_location(ventoy_os_param *param, char *diskname);
 
