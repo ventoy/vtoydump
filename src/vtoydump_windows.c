@@ -1026,7 +1026,7 @@ static int VentoyFatDiskRead(uint32 Sector, uint8 *Buffer, uint32 SectorCount)
 }
 
 
-static int VentoyRunImdisk(const char *IsoPath, const char *imdiskexe)
+static int VentoyRunImdisk(char drive, const char *IsoPath, const char *imdiskexe)
 {
     CHAR Letter;
     CHAR Cmdline[512];
@@ -1035,7 +1035,15 @@ static int VentoyRunImdisk(const char *IsoPath, const char *imdiskexe)
 
     debug("VentoyRunImdisk <%s> <%s>\n", IsoPath, imdiskexe);
 
-    Letter = vtoy_find_free_drive(0x7FFFF8);
+    if (drive)
+    {
+        Letter = drive;
+    }
+    else
+    {
+        Letter = vtoy_find_free_drive(0x7FFFF8);
+    }
+    
     sprintf_s(Cmdline, sizeof(Cmdline), "%s -a -o ro -f \"%s\" -m %C:", imdiskexe, IsoPath, Letter);
     debug("mount iso to %C: use imdisk cmd <%s>\n", Letter, Cmdline);
 
@@ -1087,7 +1095,7 @@ int vtoy_mount_iso_by_imdisk(ventoy_os_param *param, const char *diskname, char 
     if (vtoy_is_file_exist("X:\\Windows\\System32\\imdisk.exe"))
     {
         debug("imdisk.exe exist, use it directly...\n");
-        VentoyRunImdisk(IsoPath, "imdisk.exe");
+        VentoyRunImdisk(drive, IsoPath, "imdisk.exe");
         return 0;
     }
 
@@ -1130,7 +1138,7 @@ int vtoy_mount_iso_by_imdisk(ventoy_os_param *param, const char *diskname, char 
 
         if (vtoy_load_nt_driver("X:\\Windows\\System32\\imdisk.sys") == 0)
         {
-            VentoyRunImdisk(IsoPath, "X:\\Windows\\System32\\imdisk.exe");
+            VentoyRunImdisk(drive, IsoPath, "X:\\Windows\\System32\\imdisk.exe");
             rc = 0;
         }
     }
