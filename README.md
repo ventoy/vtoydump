@@ -46,4 +46,4 @@ If your OS is x86_64 then the output `vtoydump` is just for x86_64 architecture,
 *For Windows:*   
 Normally you can directly use the binraries in `bin/windows` directory (e.g. `bin/windows/NT6/64/vtoydump.exe`).  
 Also you can build from source for your distro. Of course, `VisualStudio` must be installed before build.  
-Just click the bat file (e.g. `build64_nt6.bat`) to build vtoydump.exe.   
+Just click the bat file (e.g. `build64.bat`) to build vtoydump.exe.   
