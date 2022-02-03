@@ -44,6 +44,10 @@ if not exist vtoydump.exe (
     echo Failed to build vtoydump
     exit /b 1
 )
+
+del /q bin/windows/NT6/32/vtoydump.exe
+copy /y vtoydump.exe bin/windows/NT6/32/
+
 echo Build vtoydump for x86 success ...
 echo.
 pause

@@ -4,7 +4,7 @@
 This is a tool used with "Ventoy Compatible". See [https://www.ventoy.net/en/compatible.html](https://www.ventoy.net/en/compatible.html) for detail.
 
 #### Usage
-For Linux:  
+For Linux:  (must be run with root privileges)
 ```
 vtoydump [ -lL ] [ -v ]  
     none   Only print ventoy runtime data  
@@ -34,5 +34,12 @@ vtoydump.exe -m=0x7FFFF8
 Select a free drive from D E F G H I J K L M N O P Q R S T U V W and use it to mount the ISO file.
 
 ```
+
+#### Build From Source
+Normally you can directly use the binraries in `bin/linux` directory (e.g. `bin/linux/x86_64/vtoydump`).  
+These binaries are static built version and should work for most distros.  
+Also you can build from source for your distro. Of course, `gcc` must be available before build.  
+Just run `sh build.sh` to build vtoydump.   
+If your OS is x86_64 then the output `vtoydump` is just for x86_64 architecture, so as i386 and arm64.  
 
 
