@@ -40,6 +40,6 @@ Normally you can directly use the binraries in `bin/linux` directory (e.g. `bin/
 These binaries are static built version and should work for most distros.  
 Also you can build from source for your distro. Of course, `gcc` must be available before build.  
 Just run `sh build.sh` to build vtoydump.   
-If your OS is x86_64 then the output `vtoydump` is just for x86_64 architecture, so as i386 and arm64.  
+If your OS is x86_64 then the output `vtoydump` is just for x86_64 architecture, so as for i386 and arm64.  
 
 
